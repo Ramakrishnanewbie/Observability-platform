@@ -11,6 +11,7 @@ export default function PagesLayout({ children }: { children: React.ReactNode })
   const router = useRouter();
   const supabase = getSupabaseBrowserClient();
   const [firingCount, setFiringCount] = useState(0);
+  const [anomalyCount, setAnomalyCount] = useState(0);
   const [user, setUser] = useState<any>(null);
   const [org, setOrg] = useState<any>(null);
   const [showUserMenu, setShowUserMenu] = useState(false);
@@ -38,8 +39,12 @@ export default function PagesLayout({ children }: { children: React.ReactNode })
   useEffect(() => {
     const poll = async () => {
       try {
-        const f = await observoApi.getFiringAlerts();
+        const [f, a] = await Promise.all([
+          observoApi.getFiringAlerts(),
+          observoApi.getAnomalies(60).catch(() => []),
+        ]);
         setFiringCount((f || []).length);
+        setAnomalyCount((a || []).filter((x: any) => x.severity === "critical").length);
       } catch {}
     };
     poll();
@@ -68,7 +73,7 @@ export default function PagesLayout({ children }: { children: React.ReactNode })
 
   return (
     <>
-      <Sidebar firingCount={firingCount} />
+      <Sidebar firingCount={firingCount} anomalyCount={anomalyCount} />
       <main className="min-h-screen flex flex-col bg-background lg:ml-[52px]">
         {/* Top bar */}
         <div className="h-11 flex items-center justify-between px-5 border-b border-border bg-card/80 backdrop-blur-sm shrink-0 z-30">
@@ -141,7 +146,7 @@ export default function PagesLayout({ children }: { children: React.ReactNode })
 
         {/* Footer */}
         <footer className="px-5 py-2.5 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground/50 shrink-0">
-          <span>Observo v2.0 — Metrics · Logs · Traces · Alerts</span>
+          <span>Observo v3.0 — Metrics · Logs · Traces · APM · Alerts</span>
           <div className="flex items-center gap-4">
             <span className="hidden sm:inline">Press <kbd className="px-1 py-0.5 rounded bg-muted text-muted-foreground/60 font-mono text-[9px]">1</kbd>-<kbd className="px-1 py-0.5 rounded bg-muted text-muted-foreground/60 font-mono text-[9px]">5</kbd> to navigate</span>
             <span>Refreshing every 5s</span>

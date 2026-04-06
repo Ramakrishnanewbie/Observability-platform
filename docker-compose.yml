@@ -1,21 +1,82 @@
 services:
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    container_name: observo-clickhouse
+
+  # ── TimescaleDB — time-series storage (PostgreSQL + TimescaleDB extension) ──
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: observo-timescaledb
     ports:
-      - "8123:8123"   # HTTP interface
-      - "9000:9000"   # Native TCP interface
+      - "5432:5432"
     volumes:
-      - clickhouse-data:/var/lib/clickhouse
+      - tsdb-data:/var/lib/postgresql/data
     environment:
-      CLICKHOUSE_DB: default
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
+      POSTGRES_DB: observo
+      POSTGRES_USER: observo
+      POSTGRES_PASSWORD: observo
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U observo -d observo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  # ── Observo Server — Go backend ───────────────────────────────────────────
+  server:
+    build:
+      context: .
+      dockerfile: Dockerfile.server
+    container_name: observo-server
+    ports:
+      - "8080:8080"
+    environment:
+      POSTGRES_HOST: timescaledb
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: observo
+      POSTGRES_USER: observo
+      POSTGRES_PASS: observo
+      PORT: "8080"
+      REQUIRE_AUTH: "false"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Observo Agent — host metrics collector ────────────────────────────────
+  agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.agent
+    container_name: observo-agent
+    network_mode: host
+    pid: host
+    privileged: true
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    environment:
+      OBSERVO_SERVER_URL: http://localhost:8080
+      OBSERVO_API_KEY: ""
+      OBSERVO_TAGS: "env=docker,source=compose"
+    depends_on:
+      - server
+    restart: unless-stopped
+
+  # ── Observo Web — Next.js frontend ───────────────────────────────────────
+  web:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SUPABASE_URL: https://muthgwaelfcccwgchbty.supabase.co
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im11dGhnd2FlbGZjY2N3Z2NoYnR5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMxMTUyNDIsImV4cCI6MjA4ODY5MTI0Mn0.cNYUHFlPv1M0-j8Qg1TClU9cApa7wRkiJNQsx3XDTpU
+        NEXT_PUBLIC_OBSERVO_API_URL: http://localhost:8080
+    container_name: observo-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      - server
     restart: unless-stopped
 
 volumes:
-  clickhouse-data:
+  tsdb-data:

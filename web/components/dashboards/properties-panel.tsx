@@ -1,7 +1,9 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import type { WidgetConfig } from "@/lib/dashboard-types";
 import { AVAILABLE_METRICS } from "@/lib/dashboard-types";
+import { observoApi } from "@/lib/observo-api";
 import { X, Palette } from "lucide-react";
 
 const COLORS = ["#3B82F6", "#A855F7", "#22C55E", "#F97316", "#EF4444", "#EAB308", "#06B6D4", "#EC4899", "#8B5CF6", "#14B8A6"];
@@ -15,6 +17,14 @@ interface Props {
 export function PropertiesPanel({ widget, onUpdate, onClose }: Props) {
   const showMetric = ["kpi", "area_chart", "line_chart", "bar_chart"].includes(widget.type);
   const showSeverity = widget.type === "log_stream";
+  const [liveMetrics, setLiveMetrics] = useState<string[]>([]);
+
+  // Load available metric names from the API, fall back to static list
+  useEffect(() => {
+    observoApi.getMetricNames().then(names => {
+      if (names && names.length > 0) setLiveMetrics(names);
+    }).catch(() => {});
+  }, []);
 
   return (
     <div className="w-[280px] shrink-0 border-l border-border bg-card overflow-y-auto">
@@ -61,9 +71,11 @@ export function PropertiesPanel({ widget, onUpdate, onClose }: Props) {
               onChange={(e) => onUpdate("metric", e.target.value)}
               className="w-full h-8 px-2 bg-background border border-border rounded-md text-xs outline-none"
             >
-              {AVAILABLE_METRICS.map(m => (
-                <option key={m.value} value={m.value}>{m.label}</option>
-              ))}
+              {liveMetrics.length > 0 ? (
+                liveMetrics.map(m => <option key={m} value={m}>{m}</option>)
+              ) : (
+                AVAILABLE_METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)
+              )}
             </select>
           </div>
         )}

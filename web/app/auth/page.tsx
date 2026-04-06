@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { ArrowRight, Eye, EyeOff, Loader2 } from "lucide-react";
 
-export default function AuthPage() {
+function AuthForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirect = searchParams.get("redirect") || "/dashboard";
@@ -27,12 +27,19 @@ export default function AuthPage() {
 
     try {
       if (mode === "signup") {
-        const { error: signUpError } = await supabase.auth.signUp({
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
           email,
           password,
           options: { data: { full_name: fullName } },
         });
         if (signUpError) throw signUpError;
+        // If no session, email confirmation is required
+        if (!signUpData.session) {
+          setError("Check your email for a confirmation link, then sign in.");
+          setLoading(false);
+          setMode("login");
+          return;
+        }
         router.push("/onboarding");
       } else {
         const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
@@ -240,5 +247,13 @@ export default function AuthPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function AuthPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-background" />}>
+      <AuthForm />
+    </Suspense>
   );
 }

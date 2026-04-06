@@ -18,21 +18,40 @@ import (
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/host"
 	"github.com/shirou/gopsutil/v3/mem"
+	gnet "github.com/shirou/gopsutil/v3/net"
+	gproc "github.com/shirou/gopsutil/v3/process"
 )
 
 const (
-	serverURL       = "http://localhost:8080"
-	collectInterval = 5 * time.Second
+	collectInterval   = 5 * time.Second
+	heartbeatInterval = 30 * time.Second
+	agentVersion      = "3.0.0"
+)
+
+// Config from environment — works for any deployment: on-prem, cloud, SaaS
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+var (
+	serverURL  = getEnv("OBSERVO_SERVER_URL", "http://localhost:8080")
+	apiKey     = getEnv("OBSERVO_API_KEY", "")     // Bearer token for authenticated instances
+	agentTags  = getEnv("OBSERVO_TAGS", "")        // comma-separated key=value tags e.g. env=prod,region=us-east-1
+	agentLabel = getEnv("OBSERVO_AGENT_ID", "")    // override auto-generated agent ID
 )
 
 // ─── Metric Types ───
 
 type Metric struct {
-	Timestamp  time.Time `json:"timestamp"`
-	Host       string    `json:"host"`
-	MetricName string    `json:"metric_name"`
-	Value      float64   `json:"value"`
-	Unit       string    `json:"unit"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Host       string            `json:"host"`
+	MetricName string            `json:"metric_name"`
+	Value      float64           `json:"value"`
+	Unit       string            `json:"unit"`
+	Tags       map[string]string `json:"tags,omitempty"`
 }
 
 // ─── Log Types ───
@@ -71,6 +90,53 @@ type TraceBatch struct {
 	Spans   []Span `json:"spans"`
 }
 
+// ─── Process Types ───
+
+type ProcessMetric struct {
+	Timestamp  time.Time `json:"timestamp"`
+	Host       string    `json:"host"`
+	PID        uint32    `json:"pid"`
+	Name       string    `json:"name"`
+	CPUPercent float64   `json:"cpu_percent"`
+	MemPercent float64   `json:"mem_percent"`
+	MemBytes   uint64    `json:"mem_bytes"`
+	Status     string    `json:"status"`
+}
+
+type ProcessBatch struct {
+	AgentID   string          `json:"agent_id"`
+	Processes []ProcessMetric `json:"processes"`
+}
+
+// ─── Network Types ───
+
+type NetworkMetric struct {
+	Timestamp   time.Time `json:"timestamp"`
+	Host        string    `json:"host"`
+	Interface   string    `json:"interface"`
+	BytesSent   uint64    `json:"bytes_sent"`
+	BytesRecv   uint64    `json:"bytes_recv"`
+	PacketsSent uint64    `json:"packets_sent"`
+	PacketsRecv uint64    `json:"packets_recv"`
+	ErrIn       uint64    `json:"errin"`
+	ErrOut      uint64    `json:"errout"`
+}
+
+type NetworkBatch struct {
+	AgentID string          `json:"agent_id"`
+	Network []NetworkMetric `json:"network"`
+}
+
+// ─── Heartbeat Type ───
+
+type HeartbeatPayload struct {
+	AgentID  string            `json:"agent_id"`
+	Host     string            `json:"host"`
+	Platform string            `json:"platform"`
+	Version  string            `json:"version"`
+	Tags     map[string]string `json:"tags,omitempty"`
+}
+
 // PowerShell JSON struct
 type PSEventLog struct {
 	TimeCreated      string `json:"TimeCreated"`
@@ -80,12 +146,13 @@ type PSEventLog struct {
 	LogName          string `json:"LogName"`
 }
 
-// ─── Metric Collection ───
+// ─── System Metric Collection ───
 
 func collectMetrics(hostname string) ([]Metric, error) {
 	now := time.Now()
 	var metrics []Metric
 
+	// CPU
 	cpuPercent, err := cpu.Percent(1*time.Second, false)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read CPU: %w", err)
@@ -95,24 +162,184 @@ func collectMetrics(hostname string) ([]Metric, error) {
 		Value: cpuPercent[0], Unit: "percent",
 	})
 
+	// Per-CPU cores
+	perCPU, err := cpu.Percent(0, true)
+	if err == nil {
+		for i, pct := range perCPU {
+			metrics = append(metrics, Metric{
+				Timestamp: now, Host: hostname,
+				MetricName: fmt.Sprintf("cpu.core%d_percent", i),
+				Value: pct, Unit: "percent",
+				Tags: map[string]string{"core": fmt.Sprintf("%d", i)},
+			})
+		}
+	}
+
+	// Memory
 	memInfo, err := mem.VirtualMemory()
 	if err != nil {
 		return nil, fmt.Errorf("failed to read memory: %w", err)
 	}
-	metrics = append(metrics, Metric{Timestamp: now, Host: hostname, MetricName: "memory.usage_percent", Value: memInfo.UsedPercent, Unit: "percent"})
-	metrics = append(metrics, Metric{Timestamp: now, Host: hostname, MetricName: "memory.used_bytes", Value: float64(memInfo.Used), Unit: "bytes"})
-	metrics = append(metrics, Metric{Timestamp: now, Host: hostname, MetricName: "memory.total_bytes", Value: float64(memInfo.Total), Unit: "bytes"})
+	metrics = append(metrics,
+		Metric{Timestamp: now, Host: hostname, MetricName: "memory.usage_percent", Value: memInfo.UsedPercent, Unit: "percent"},
+		Metric{Timestamp: now, Host: hostname, MetricName: "memory.used_bytes", Value: float64(memInfo.Used), Unit: "bytes"},
+		Metric{Timestamp: now, Host: hostname, MetricName: "memory.total_bytes", Value: float64(memInfo.Total), Unit: "bytes"},
+		Metric{Timestamp: now, Host: hostname, MetricName: "memory.available_bytes", Value: float64(memInfo.Available), Unit: "bytes"},
+	)
 
-	diskInfo, err := disk.Usage("C:")
-	if err != nil {
-		diskInfo, err = disk.Usage("/")
-		if err != nil {
-			return nil, fmt.Errorf("failed to read disk: %w", err)
-		}
+	// Swap memory
+	swapInfo, err := mem.SwapMemory()
+	if err == nil && swapInfo.Total > 0 {
+		metrics = append(metrics, Metric{
+			Timestamp: now, Host: hostname, MetricName: "memory.swap_percent",
+			Value: swapInfo.UsedPercent, Unit: "percent",
+		})
 	}
-	metrics = append(metrics, Metric{Timestamp: now, Host: hostname, MetricName: "disk.usage_percent", Value: diskInfo.UsedPercent, Unit: "percent"})
+
+	// Disk usage (root)
+	diskRoot := "/"
+	if runtime.GOOS == "windows" {
+		diskRoot = "C:"
+	}
+	diskInfo, err := disk.Usage(diskRoot)
+	if err == nil {
+		metrics = append(metrics,
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.usage_percent", Value: diskInfo.UsedPercent, Unit: "percent"},
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.used_bytes", Value: float64(diskInfo.Used), Unit: "bytes"},
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.free_bytes", Value: float64(diskInfo.Free), Unit: "bytes"},
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.total_bytes", Value: float64(diskInfo.Total), Unit: "bytes"},
+		)
+	}
+
+	// Disk I/O
+	diskIO, err := disk.IOCounters()
+	if err == nil {
+		var totalRead, totalWrite, totalReadOps, totalWriteOps uint64
+		for _, d := range diskIO {
+			totalRead += d.ReadBytes
+			totalWrite += d.WriteBytes
+			totalReadOps += d.ReadCount
+			totalWriteOps += d.WriteCount
+		}
+		metrics = append(metrics,
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.read_bytes_total", Value: float64(totalRead), Unit: "bytes"},
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.write_bytes_total", Value: float64(totalWrite), Unit: "bytes"},
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.read_ops_total", Value: float64(totalReadOps), Unit: "ops"},
+			Metric{Timestamp: now, Host: hostname, MetricName: "disk.write_ops_total", Value: float64(totalWriteOps), Unit: "ops"},
+		)
+	}
 
 	return metrics, nil
+}
+
+// ─── Process Metrics Collection ───
+
+func collectProcessMetrics(hostname string) []ProcessMetric {
+	procs, err := gproc.Processes()
+	if err != nil {
+		return nil
+	}
+
+	type ProcInfo struct {
+		pid        uint32
+		name       string
+		cpuPercent float64
+		memPercent float32
+		memBytes   uint64
+		status     string
+	}
+
+	var infos []ProcInfo
+	for _, p := range procs {
+		name, err := p.Name()
+		if err != nil || name == "" {
+			continue
+		}
+		cpuPct, err := p.CPUPercent()
+		if err != nil {
+			cpuPct = 0
+		}
+		memPct, err := p.MemoryPercent()
+		if err != nil {
+			memPct = 0
+		}
+		memInfo, err := p.MemoryInfo()
+		memBytes := uint64(0)
+		if err == nil && memInfo != nil {
+			memBytes = memInfo.RSS
+		}
+		statuses, err := p.Status()
+		status := "running"
+		if err == nil && len(statuses) > 0 {
+			status = statuses[0]
+		}
+		infos = append(infos, ProcInfo{
+			pid: uint32(p.Pid), name: name,
+			cpuPercent: cpuPct, memPercent: float32(memPct),
+			memBytes: memBytes, status: status,
+		})
+	}
+
+	// Sort by CPU desc and take top 20
+	for i := 0; i < len(infos)-1; i++ {
+		for j := i + 1; j < len(infos); j++ {
+			if infos[j].cpuPercent > infos[i].cpuPercent {
+				infos[i], infos[j] = infos[j], infos[i]
+			}
+		}
+	}
+	if len(infos) > 20 {
+		infos = infos[:20]
+	}
+
+	now := time.Now()
+	var results []ProcessMetric
+	for _, info := range infos {
+		results = append(results, ProcessMetric{
+			Timestamp:  now,
+			Host:       hostname,
+			PID:        info.pid,
+			Name:       info.name,
+			CPUPercent: info.cpuPercent,
+			MemPercent: float64(info.memPercent),
+			MemBytes:   info.memBytes,
+			Status:     info.status,
+		})
+	}
+	return results
+}
+
+// ─── Network Metrics Collection ───
+
+func collectNetworkMetrics(hostname string) []NetworkMetric {
+	counters, err := gnet.IOCounters(true) // per interface
+	if err != nil {
+		return nil
+	}
+
+	now := time.Now()
+	var results []NetworkMetric
+	for _, c := range counters {
+		// Skip loopback and zero-traffic interfaces
+		if c.Name == "lo" || c.Name == "Loopback Pseudo-Interface 1" {
+			continue
+		}
+		if c.BytesSent == 0 && c.BytesRecv == 0 {
+			continue
+		}
+		results = append(results, NetworkMetric{
+			Timestamp:   now,
+			Host:        hostname,
+			Interface:   c.Name,
+			BytesSent:   c.BytesSent,
+			BytesRecv:   c.BytesRecv,
+			PacketsSent: c.PacketsSent,
+			PacketsRecv: c.PacketsRecv,
+			ErrIn:       c.Errin,
+			ErrOut:      c.Errout,
+		})
+	}
+	return results
 }
 
 // ─── Windows Log Collection ───
@@ -140,7 +367,7 @@ $events | ConvertTo-Json -Compress
 	cmd.Env = append(os.Environ(), "POWERSHELL_TELEMETRY_OPTOUT=1")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("[%s] ⚠️  PowerShell failed: %v\n", time.Now().Format("15:04:05"), err)
+		fmt.Printf("[%s] PowerShell failed: %v\n", time.Now().Format("15:04:05"), err)
 		return nil
 	}
 
@@ -245,14 +472,12 @@ func collectPlatformLogs(hostname string) []LogEntry {
 }
 
 // ─── Distributed Trace Simulation ───
-// Generates realistic trace data simulating a microservices environment
 
 func generateTraceData(hostname string) []Span {
-	// Simulate different request flows through microservices
 	flows := []struct {
-		name    string
-		steps   []struct{ service, operation string }
-		weight  int
+		name   string
+		steps  []struct{ service, operation string }
+		weight int
 	}{
 		{
 			name: "api-request",
@@ -263,7 +488,7 @@ func generateTraceData(hostname string) []Span {
 				{"postgres", "SELECT users"},
 				{"cache", "GET user:cache"},
 			},
-			weight: 40,
+			weight: 30,
 		},
 		{
 			name: "order-flow",
@@ -275,7 +500,7 @@ func generateTraceData(hostname string) []Span {
 				{"postgres", "INSERT orders"},
 				{"notification-service", "SendEmail"},
 			},
-			weight: 25,
+			weight: 20,
 		},
 		{
 			name: "search",
@@ -285,7 +510,7 @@ func generateTraceData(hostname string) []Span {
 				{"elasticsearch", "Query"},
 				{"cache", "SET search:result"},
 			},
-			weight: 20,
+			weight: 15,
 		},
 		{
 			name: "health-check",
@@ -294,11 +519,34 @@ func generateTraceData(hostname string) []Span {
 				{"user-service", "Ping"},
 				{"order-service", "Ping"},
 			},
+			weight: 10,
+		},
+		{
+			name: "payment-flow",
+			steps: []struct{ service, operation string }{
+				{"api-gateway", "HTTP POST /api/payments"},
+				{"auth-service", "ValidateToken"},
+				{"payment-service", "ProcessPayment"},
+				{"fraud-detection", "CheckFraud"},
+				{"postgres", "INSERT payments"},
+				{"notification-service", "SendReceipt"},
+				{"analytics-service", "TrackEvent"},
+			},
 			weight: 15,
+		},
+		{
+			name: "user-registration",
+			steps: []struct{ service, operation string }{
+				{"api-gateway", "HTTP POST /api/register"},
+				{"user-service", "CreateUser"},
+				{"postgres", "INSERT users"},
+				{"email-service", "SendWelcome"},
+				{"analytics-service", "TrackSignup"},
+			},
+			weight: 10,
 		},
 	}
 
-	// Pick a random flow based on weight
 	totalWeight := 0
 	for _, f := range flows {
 		totalWeight += f.weight
@@ -324,9 +572,8 @@ func generateTraceData(hostname string) []Span {
 
 	for _, step := range flow.steps {
 		spanID := generateID()
-		duration := 5 + rand.Float64()*100 // 5-105ms
+		duration := 5 + rand.Float64()*100
 
-		// Occasional errors (5% chance)
 		status := "ok"
 		if rand.Intn(20) == 0 {
 			status = "error"
@@ -343,12 +590,13 @@ func generateTraceData(hostname string) []Span {
 			Duration:  duration,
 			Status:    status,
 			Tags: map[string]string{
-				"flow": flow.name,
+				"flow":    flow.name,
+				"version": agentVersion,
 			},
 		})
 
 		parentID = spanID
-		elapsed += duration * 0.8 // Overlapping spans
+		elapsed += duration * 0.8
 	}
 
 	return spans
@@ -365,36 +613,65 @@ func generateID() string {
 
 // ─── Sending ───
 
-func sendMetrics(metrics []Metric) {
-	jsonData, _ := json.Marshal(metrics)
-	resp, err := http.Post(serverURL+"/v1/metrics", "application/json", bytes.NewBuffer(jsonData))
+func sendJSON(path string, payload interface{}) error {
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("❌ Failed to send metrics: %v", err)
-		return
+		return err
+	}
+	req, err := http.NewRequest("POST", serverURL+path, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if apiKey != "" {
+		req.Header.Set("X-API-Key", apiKey)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
 	}
 	defer resp.Body.Close()
-	fmt.Printf("[%s] ✅ Sent %d metrics\n", time.Now().Format("15:04:05"), len(metrics))
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// parseTags parses "env=prod,region=us-east-1" into a map
+func parseTags(raw string) map[string]string {
+	m := map[string]string{}
+	for _, pair := range strings.Split(raw, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		parts := strings.SplitN(pair, "=", 2)
+		if len(parts) == 2 {
+			m[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return m
+}
+
+func sendMetrics(metrics []Metric) {
+	if err := sendJSON("/v1/metrics", metrics); err != nil {
+		log.Printf("Failed to send metrics: %v", err)
+		return
+	}
+	fmt.Printf("[%s] Sent %d metrics\n", time.Now().Format("15:04:05"), len(metrics))
 }
 
 func sendLogs(agentID string, logs []LogEntry) {
 	if len(logs) == 0 {
-		fmt.Printf("[%s] 📝 No logs this cycle\n", time.Now().Format("15:04:05"))
 		return
 	}
 	batch := LogBatch{AgentID: agentID, Logs: logs}
-	jsonData, _ := json.Marshal(batch)
-	resp, err := http.Post(serverURL+"/v1/logs", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		log.Printf("❌ Failed to send logs: %v", err)
+	if err := sendJSON("/v1/logs", batch); err != nil {
+		log.Printf("Failed to send logs: %v", err)
 		return
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusOK {
-		fmt.Printf("[%s] 📝 Sent %d logs\n", time.Now().Format("15:04:05"), len(logs))
-	} else {
-		body, _ := io.ReadAll(resp.Body)
-		fmt.Printf("[%s] ⚠️  Logs: %d: %s\n", time.Now().Format("15:04:05"), resp.StatusCode, string(body))
-	}
+	fmt.Printf("[%s] Sent %d logs\n", time.Now().Format("15:04:05"), len(logs))
 }
 
 func sendTraces(agentID string, spans []Span) {
@@ -402,14 +679,58 @@ func sendTraces(agentID string, spans []Span) {
 		return
 	}
 	batch := TraceBatch{AgentID: agentID, Spans: spans}
-	jsonData, _ := json.Marshal(batch)
-	resp, err := http.Post(serverURL+"/v1/traces", "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		log.Printf("❌ Failed to send traces: %v", err)
+	if err := sendJSON("/v1/traces", batch); err != nil {
+		log.Printf("Failed to send traces: %v", err)
 		return
 	}
-	defer resp.Body.Close()
-	fmt.Printf("[%s] 🔗 Sent %d spans\n", time.Now().Format("15:04:05"), len(spans))
+	fmt.Printf("[%s] Sent %d spans\n", time.Now().Format("15:04:05"), len(spans))
+}
+
+func sendProcessMetrics(agentID string, procs []ProcessMetric) {
+	if len(procs) == 0 {
+		return
+	}
+	batch := ProcessBatch{AgentID: agentID, Processes: procs}
+	if err := sendJSON("/v1/processes", batch); err != nil {
+		log.Printf("Failed to send process metrics: %v", err)
+		return
+	}
+	fmt.Printf("[%s] Sent %d process metrics\n", time.Now().Format("15:04:05"), len(procs))
+}
+
+func sendNetworkMetrics(agentID string, nets []NetworkMetric) {
+	if len(nets) == 0 {
+		return
+	}
+	batch := NetworkBatch{AgentID: agentID, Network: nets}
+	if err := sendJSON("/v1/network", batch); err != nil {
+		log.Printf("Failed to send network metrics: %v", err)
+		return
+	}
+	fmt.Printf("[%s] Sent %d network stats\n", time.Now().Format("15:04:05"), len(nets))
+}
+
+func sendHeartbeat(agentID, hostname, platform string) {
+	tags := map[string]string{
+		"os":   runtime.GOOS,
+		"arch": runtime.GOARCH,
+	}
+	// Merge user-defined tags from OBSERVO_TAGS env var
+	for k, v := range parseTags(agentTags) {
+		tags[k] = v
+	}
+	hb := HeartbeatPayload{
+		AgentID:  agentID,
+		Host:     hostname,
+		Platform: platform,
+		Version:  agentVersion,
+		Tags:     tags,
+	}
+	if err := sendJSON("/v1/heartbeat", hb); err != nil {
+		log.Printf("Failed to send heartbeat: %v", err)
+		return
+	}
+	fmt.Printf("[%s] Heartbeat sent\n", time.Now().Format("15:04:05"))
 }
 
 // ─── Main ───
@@ -422,16 +743,34 @@ func main() {
 		log.Fatalf("Failed to get host info: %v", err)
 	}
 	hostname := hostInfo.Hostname
+	platform := hostInfo.Platform + " " + hostInfo.PlatformVersion
 	agentID := fmt.Sprintf("agent-%s", hostname)
+	if agentLabel != "" {
+		agentID = agentLabel
+	}
 
-	fmt.Println("=================================")
-	fmt.Println("  Observo Agent v2.0")
-	fmt.Printf("  Host: %s\n", hostname)
-	fmt.Printf("  OS:   %s/%s\n", runtime.GOOS, runtime.GOARCH)
-	fmt.Printf("  Sending to %s\n", serverURL)
-	fmt.Println("  Collecting: metrics + logs + traces")
-	fmt.Println("=================================")
+	fmt.Println("═══════════════════════════════════════")
+	fmt.Println("  Observo Agent v3.0")
+	fmt.Printf("  Host:     %s\n", hostname)
+	fmt.Printf("  Agent ID: %s\n", agentID)
+	fmt.Printf("  OS:       %s/%s\n", runtime.GOOS, runtime.GOARCH)
+	fmt.Printf("  Platform: %s\n", platform)
+	fmt.Printf("  Server:   %s\n", serverURL)
+	if apiKey != "" {
+		fmt.Println("  Auth:     API key configured ✓")
+	} else {
+		fmt.Println("  Auth:     none (set OBSERVO_API_KEY to enable)")
+	}
+	if agentTags != "" {
+		fmt.Printf("  Tags:     %s\n", agentTags)
+	}
+	fmt.Println("  Collecting: metrics · logs · traces")
+	fmt.Println("              processes · network · I/O")
+	fmt.Println("═══════════════════════════════════════")
 	fmt.Println()
+
+	// Initial heartbeat
+	sendHeartbeat(agentID, hostname, platform)
 
 	// First collection
 	if metrics, err := collectMetrics(hostname); err == nil {
@@ -439,22 +778,41 @@ func main() {
 	}
 	sendLogs(agentID, collectPlatformLogs(hostname))
 	sendTraces(agentID, generateTraceData(hostname))
+	sendProcessMetrics(agentID, collectProcessMetrics(hostname))
+	sendNetworkMetrics(agentID, collectNetworkMetrics(hostname))
 
-	ticker := time.NewTicker(collectInterval)
-	defer ticker.Stop()
+	metricTicker := time.NewTicker(collectInterval)
+	heartbeatTicker := time.NewTicker(heartbeatInterval)
+	defer metricTicker.Stop()
+	defer heartbeatTicker.Stop()
 
 	traceCounter := 0
-	for range ticker.C {
-		if metrics, err := collectMetrics(hostname); err == nil {
-			sendMetrics(metrics)
-		}
-		sendLogs(agentID, collectPlatformLogs(hostname))
+	for {
+		select {
+		case <-metricTicker.C:
+			// System metrics
+			if metrics, err := collectMetrics(hostname); err == nil {
+				sendMetrics(metrics)
+			}
 
-		// Generate 1-3 traces per cycle
-		traceCounter++
-		traceCount := 1 + rand.Intn(3)
-		for i := 0; i < traceCount; i++ {
-			sendTraces(agentID, generateTraceData(hostname))
+			// Logs (every cycle)
+			sendLogs(agentID, collectPlatformLogs(hostname))
+
+			// Traces: 1-3 per cycle
+			traceCounter++
+			traceCount := 1 + rand.Intn(3)
+			for i := 0; i < traceCount; i++ {
+				sendTraces(agentID, generateTraceData(hostname))
+			}
+
+			// Process and network metrics (every 3 cycles = ~15s)
+			if traceCounter%3 == 0 {
+				sendProcessMetrics(agentID, collectProcessMetrics(hostname))
+				sendNetworkMetrics(agentID, collectNetworkMetrics(hostname))
+			}
+
+		case <-heartbeatTicker.C:
+			sendHeartbeat(agentID, hostname, platform)
 		}
 	}
 }

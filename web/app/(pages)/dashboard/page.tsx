@@ -36,9 +36,9 @@ function ChartTip({ active, payload, label }: any) {
 }
 
 // ─── KPI Card (with sparkline) ───
-function KPICard({ label, value, prevValue, unit, icon: Icon, color, sparkData }: {
+function KPICard({ label, value, prevValue, unit, icon: Icon, color, sparkData, loaded }: {
   label: string; value: number | null; prevValue?: number | null; unit: string;
-  icon: any; color: string; sparkData?: any[];
+  icon: any; color: string; sparkData?: any[]; loaded?: boolean;
 }) {
   const change = value !== null && prevValue != null && prevValue !== 0
     ? ((value - prevValue) / Math.abs(prevValue)) * 100 : null;
@@ -97,8 +97,14 @@ function KPICard({ label, value, prevValue, unit, icon: Icon, color, sparkData }
           </>
         ) : (
           <div className="flex items-center gap-2 mt-1">
-            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground/30" />
-            <span className="text-sm text-muted-foreground/30">Waiting…</span>
+            {loaded ? (
+              <span className="text-sm text-muted-foreground/40">No data</span>
+            ) : (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground/30" />
+                <span className="text-sm text-muted-foreground/30">Loading…</span>
+              </>
+            )}
           </div>
         )}
       </div>
@@ -107,9 +113,9 @@ function KPICard({ label, value, prevValue, unit, icon: Icon, color, sparkData }
 }
 
 // ─── Metric Chart (polished) ───
-function MetricChart({ title, data, color, secondaryData, secondaryColor, secondaryLabel, height = 220 }: {
+function MetricChart({ title, data, color, secondaryData, secondaryColor, secondaryLabel, height = 220, loaded }: {
   title: string; data: any[]; color: string; height?: number;
-  secondaryData?: any[]; secondaryColor?: string; secondaryLabel?: string;
+  secondaryData?: any[]; secondaryColor?: string; secondaryLabel?: string; loaded?: boolean;
 }) {
   const formatted = useMemo(() => {
     const primary = data.map((d: any) => ({
@@ -132,8 +138,12 @@ function MetricChart({ title, data, color, secondaryData, secondaryColor, second
       </div>
       <div className="px-2 pb-3">
         {formatted.length === 0 ? (
-          <div style={{ height }} className="flex items-center justify-center">
-            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/20" />
+          <div style={{ height }} className="flex flex-col items-center justify-center gap-2">
+            {loaded ? (
+              <span className="text-xs text-muted-foreground/30">No data in this time range</span>
+            ) : (
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground/20" />
+            )}
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={height}>
@@ -209,6 +219,7 @@ export default function DashboardPage() {
   const [connected, setConnected] = useState(false);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [timeRange, setTimeRange] = useState(10);
+  const [initialLoaded, setInitialLoaded] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -232,6 +243,7 @@ export default function DashboardPage() {
       setConnected(true);
       setLastUpdate(new Date());
     } catch { setConnected(false); }
+    finally { setInitialLoaded(true); }
   }, [selectedHost, timeRange]);
 
   useEffect(() => {
@@ -306,33 +318,33 @@ export default function DashboardPage() {
           <KPICard
             label="CPU Usage" value={latest["cpu.usage_percent"]?.value ?? null}
             prevValue={prevLatest["cpu.usage_percent"]?.value}
-            unit="percent" icon={Cpu} color="#3B82F6" sparkData={cpuSpark}
+            unit="percent" icon={Cpu} color="#3B82F6" sparkData={cpuSpark} loaded={initialLoaded}
           />
           <KPICard
             label="Memory Usage" value={latest["memory.usage_percent"]?.value ?? null}
             prevValue={prevLatest["memory.usage_percent"]?.value}
-            unit="percent" icon={MemoryStick} color="#A855F7" sparkData={memSpark}
+            unit="percent" icon={MemoryStick} color="#A855F7" sparkData={memSpark} loaded={initialLoaded}
           />
           <KPICard
             label="Memory Used" value={latest["memory.used_bytes"]?.value ?? null}
             prevValue={prevLatest["memory.used_bytes"]?.value}
-            unit="bytes" icon={HardDrive} color="#8B5CF6" sparkData={memBytesSpark}
+            unit="bytes" icon={HardDrive} color="#8B5CF6" sparkData={memBytesSpark} loaded={initialLoaded}
           />
           <KPICard
             label="Disk Usage" value={latest["disk.usage_percent"]?.value ?? null}
             prevValue={prevLatest["disk.usage_percent"]?.value}
-            unit="percent" icon={Activity} color="#22C55E" sparkData={diskSpark}
+            unit="percent" icon={Activity} color="#22C55E" sparkData={diskSpark} loaded={initialLoaded}
           />
         </div>
 
         {/* Charts */}
         <div className="grid grid-cols-2 gap-3 mb-3">
-          <MetricChart title="CPU Usage %" data={cpuData} color="#3B82F6" height={240} />
-          <MetricChart title="Memory Usage %" data={memData} color="#A855F7" height={240} />
+          <MetricChart title="CPU Usage %" data={cpuData} color="#3B82F6" height={240} loaded={initialLoaded} />
+          <MetricChart title="Memory Usage %" data={memData} color="#A855F7" height={240} loaded={initialLoaded} />
         </div>
 
         <div className="grid grid-cols-3 gap-3">
-          <MetricChart title="Disk Usage %" data={diskData} color="#22C55E" height={180} />
+          <MetricChart title="Disk Usage %" data={diskData} color="#22C55E" height={180} loaded={initialLoaded} />
 
           {/* Mini summary cards */}
           <div className="bg-card border border-border rounded-xl p-4 flex flex-col shadow-sm">
@@ -394,7 +406,9 @@ export default function DashboardPage() {
               ))}
               {cpuData.length === 0 && (
                 <div className="flex items-center justify-center h-full text-muted-foreground/30 text-xs">
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" /> Waiting for data…
+                  {initialLoaded
+                    ? "No data yet"
+                    : <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading…</>}
                 </div>
               )}
             </div>

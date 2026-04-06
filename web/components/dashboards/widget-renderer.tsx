@@ -5,12 +5,12 @@ import { observoApi } from "@/lib/observo-api";
 import { formatBytes } from "@/lib/utils";
 import type { WidgetConfig } from "@/lib/dashboard-types";
 import {
-  AreaChart, Area, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  AreaChart, Area, LineChart, Line, BarChart, Bar,
+  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
 import {
   TrendingUp, TrendingDown, Minus, AlertCircle, Bell,
-  Server, ScrollText, Loader2,
+  Server, ScrollText, Loader2, Network,
 } from "lucide-react";
 
 function ChartTip({ active, payload, label }: any) {
@@ -106,6 +106,7 @@ function TimeseriesWidget({ config, chartType = "area" }: { config: WidgetConfig
   const [data, setData] = useState<any[]>([]);
   const color = config.color || "#3B82F6";
   const gradId = `ts-${config.id}`;
+  const isPercent = !config.metric?.includes("bytes") && !config.metric?.includes("cores") && !config.metric?.includes("count") && !config.metric?.includes("rate");
 
   const fetchData = useCallback(async () => {
     try {
@@ -136,7 +137,7 @@ function TimeseriesWidget({ config, chartType = "area" }: { config: WidgetConfig
                   </linearGradient></defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="time" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} />
+                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} domain={isPercent ? [0, 100] : ["auto", "auto"]} tickFormatter={(v: number) => isPercent ? `${v}%` : `${v}`} />
                   <Tooltip content={<ChartTip />} />
                   <Area type="monotone" dataKey="value" stroke={color} strokeWidth={2} fill={`url(#${gradId})`} dot={false} activeDot={{ r: 3, fill: color }} />
                 </AreaChart>
@@ -144,7 +145,7 @@ function TimeseriesWidget({ config, chartType = "area" }: { config: WidgetConfig
                 <LineChart data={data} margin={{ top: 5, right: 10, left: -15, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                   <XAxis dataKey="time" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} />
+                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} domain={isPercent ? [0, 100] : ["auto", "auto"]} tickFormatter={(v: number) => isPercent ? `${v}%` : `${v}`} />
                   <Tooltip content={<ChartTip />} />
                   <Line type="monotone" dataKey="value" stroke={color} strokeWidth={2} dot={false} activeDot={{ r: 3, fill: color }} />
                 </LineChart>
@@ -152,6 +153,99 @@ function TimeseriesWidget({ config, chartType = "area" }: { config: WidgetConfig
             </ResponsiveContainer>
           </div>
         )}
+      </div>
+    </Frame>
+  );
+}
+
+// ─── Bar Chart ───
+function BarChartWidget({ config }: { config: WidgetConfig }) {
+  const [data, setData] = useState<any[]>([]);
+  const color = config.color || "#3B82F6";
+
+  const fetchData = useCallback(async () => {
+    try {
+      // Bar chart shows latest value per host for a given metric
+      const latest = await observoApi.getLatest();
+      const metric = config.metric || "cpu.usage_percent";
+      const byHost = (latest || [])
+        .filter((d: any) => d.metric_name === metric)
+        .map((d: any) => ({ host: d.host, value: d.value }))
+        .sort((a: any, b: any) => b.value - a.value)
+        .slice(0, 10);
+      setData(byHost);
+    } catch {}
+  }, [config.metric]);
+
+  useEffect(() => { fetchData(); const i = setInterval(fetchData, 10000); return () => clearInterval(i); }, [fetchData]);
+  const isPercent = !config.metric?.includes("bytes");
+
+  return (
+    <Frame>
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", padding: "14px 16px" }}>
+        <p style={{ fontSize: 10, fontWeight: 600, color: "hsl(var(--muted-foreground))", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 10, lineHeight: 1 }}>
+          {config.title}
+        </p>
+        {data.length === 0 ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <Loader2 style={{ width: 16, height: 16, color: "hsl(var(--muted-foreground))", animation: "spin 1s linear infinite", opacity: 0.4 }} />
+          </div>
+        ) : (
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data} layout="vertical" margin={{ top: 0, right: 30, left: 4, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                <XAxis type="number" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={{ stroke: "hsl(var(--border))" }} tickLine={false} domain={isPercent ? [0, 100] : ["auto", "auto"]} tickFormatter={(v: number) => isPercent ? `${v}%` : `${v}`} />
+                <YAxis type="category" dataKey="host" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 9 }} axisLine={false} tickLine={false} width={80} />
+                <Tooltip formatter={(v: any) => [isPercent ? `${Number(v).toFixed(1)}%` : v, config.metric]} />
+                <Bar dataKey="value" radius={[0, 3, 3, 0]}>
+                  {data.map((_: any, i: number) => (
+                    <Cell key={i} fill={color} fillOpacity={1 - i * 0.07} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+    </Frame>
+  );
+}
+
+// ─── Trace List ───
+function TraceListWidget({ config }: { config: WidgetConfig }) {
+  const [traces, setTraces] = useState<any[]>([]);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const t = await observoApi.getTraces("minutes=10&limit=20");
+      setTraces(t || []);
+    } catch {}
+  }, []);
+
+  useEffect(() => { fetchData(); const i = setInterval(fetchData, 10000); return () => clearInterval(i); }, [fetchData]);
+
+  const statusColor = (s: string) => s === "error" ? "#ef4444" : "#22c55e";
+
+  return (
+    <Frame>
+      <div style={{ height: "100%", display: "flex", flexDirection: "column" }}>
+        <div style={{ padding: "12px 16px 6px", display: "flex", justifyContent: "space-between", flexShrink: 0 }}>
+          <p style={{ fontSize: 10, fontWeight: 600, color: "hsl(var(--muted-foreground))", textTransform: "uppercase", letterSpacing: "0.08em" }}>{config.title || "Recent Traces"}</p>
+          <Network style={{ width: 12, height: 12, color: "hsl(var(--muted-foreground))", opacity: 0.3 }} />
+        </div>
+        <div style={{ flex: 1, overflow: "auto", padding: "0 8px 8px" }}>
+          {traces.length === 0 ? (
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", fontSize: 11, color: "hsl(var(--muted-foreground))", opacity: 0.4 }}>No traces yet</div>
+          ) : traces.map((t: any, i: number) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", borderRadius: 6, marginBottom: 2, background: "hsl(var(--muted) / 0.15)" }}>
+              <span style={{ width: 6, height: 6, borderRadius: "50%", background: statusColor(t.status), flexShrink: 0 }} />
+              <span style={{ fontSize: 11, fontWeight: 600, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{t.service}</span>
+              <span style={{ fontSize: 10, color: "hsl(var(--muted-foreground))", flexShrink: 0 }}>{t.operation?.slice(0, 20)}</span>
+              <span style={{ fontSize: 9, fontFamily: "monospace", color: "hsl(var(--muted-foreground))", flexShrink: 0 }}>{t.duration_ms?.toFixed(0)}ms</span>
+            </div>
+          ))}
+        </div>
       </div>
     </Frame>
   );
@@ -333,9 +427,10 @@ export function WidgetRenderer({ config }: { config: WidgetConfig }) {
     case "kpi": return <KPIWidget config={config} />;
     case "area_chart": return <TimeseriesWidget config={config} chartType="area" />;
     case "line_chart": return <TimeseriesWidget config={config} chartType="line" />;
-    case "bar_chart": return <TimeseriesWidget config={config} chartType="area" />;
+    case "bar_chart": return <BarChartWidget config={config} />;
     case "log_stream": return <LogStreamWidget config={config} />;
     case "metric_table": return <MetricTableWidget config={config} />;
+    case "trace_list": return <TraceListWidget config={config} />;
     case "alert_status": return <AlertStatusWidget config={config} />;
     case "host_map": return <HostMapWidget config={config} />;
     case "text": return <TextWidget config={config} />;

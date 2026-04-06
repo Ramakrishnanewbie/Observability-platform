@@ -6,12 +6,13 @@ import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import {
   BarChart3, ScrollText, Network, Bell, Server,
-  Settings, ChevronRight, LayoutDashboard,
+  Settings, ChevronRight, LayoutDashboard, Zap,
+  GitBranch, Activity, AlertTriangle,
 } from "lucide-react";
 
 const NAV_GROUPS = [
   {
-    label: "Monitor",
+    label: "Observe",
     items: [
       { href: "/dashboard", label: "Metrics", icon: BarChart3 },
       { href: "/logs", label: "Logs", icon: ScrollText },
@@ -20,9 +21,17 @@ const NAV_GROUPS = [
     ],
   },
   {
+    label: "Performance",
+    items: [
+      { href: "/apm", label: "APM", icon: Zap },
+      { href: "/service-map", label: "Service Map", icon: GitBranch },
+    ],
+  },
+  {
     label: "Respond",
     items: [
       { href: "/alerts", label: "Alerts", icon: Bell },
+      { href: "/anomalies", label: "Anomalies", icon: Activity },
     ],
   },
   {
@@ -34,7 +43,7 @@ const NAV_GROUPS = [
   },
 ];
 
-export function Sidebar({ firingCount = 0 }: { firingCount?: number }) {
+export function Sidebar({ firingCount = 0, anomalyCount = 0 }: { firingCount?: number; anomalyCount?: number }) {
   const pathname = usePathname();
   const [expanded, setExpanded] = useState(false);
   const isHovering = useRef(false);
@@ -117,6 +126,10 @@ export function Sidebar({ firingCount = 0 }: { firingCount?: number }) {
             <div className="space-y-0.5">
               {group.items.map((item) => {
                 const isActive = pathname === item.href || pathname.startsWith(item.href + "/");
+                const badge =
+                  item.href === "/alerts" && firingCount > 0 ? firingCount :
+                  item.href === "/anomalies" && anomalyCount > 0 ? anomalyCount : 0;
+
                 return (
                   <Link
                     key={item.href}
@@ -135,9 +148,9 @@ export function Sidebar({ firingCount = 0 }: { firingCount?: number }) {
                         <span className="text-[13px] flex-1 truncate whitespace-nowrap">
                           {item.label}
                         </span>
-                        {item.href === "/alerts" && firingCount > 0 && (
+                        {badge > 0 && (
                           <span className="bg-destructive text-white text-[9px] font-bold rounded-full min-w-[16px] h-4 flex items-center justify-center px-1">
-                            {firingCount}
+                            {badge}
                           </span>
                         )}
                         {isActive && <ChevronRight className="h-3 w-3 opacity-40 shrink-0" />}
@@ -146,9 +159,9 @@ export function Sidebar({ firingCount = 0 }: { firingCount?: number }) {
                     {!expanded && isActive && (
                       <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 rounded-r-full bg-primary" />
                     )}
-                    {!expanded && item.href === "/alerts" && firingCount > 0 && (
+                    {!expanded && badge > 0 && (
                       <span className="absolute -top-0.5 -right-0.5 bg-destructive text-white text-[8px] font-bold rounded-full min-w-[14px] h-3.5 flex items-center justify-center px-0.5">
-                        {firingCount}
+                        {badge}
                       </span>
                     )}
                   </Link>
@@ -174,7 +187,7 @@ export function Sidebar({ firingCount = 0 }: { firingCount?: number }) {
           {expanded && (
             <div className="overflow-hidden">
               <p className="text-xs font-semibold text-sidebar-foreground">Observo</p>
-              <p className="text-[10px] text-muted-foreground">v2.0 · Enterprise</p>
+              <p className="text-[10px] text-muted-foreground">v3.0 · Enterprise</p>
             </div>
           )}
         </div>
