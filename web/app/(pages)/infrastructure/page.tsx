@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { observoApi } from "@/lib/observo-api";
+import { useDatasource } from "@/hooks/use-datasource";
 import { cn, formatBytes } from "@/lib/utils";
 import {
   Server, Cpu, MemoryStick, HardDrive, Network, Activity,
@@ -143,6 +144,7 @@ function NetworkTable({ networks }: { networks: any[] }) {
 }
 
 export default function InfrastructurePage() {
+  const { selectedHost } = useDatasource();
   const [hosts, setHosts] = useState<string[]>([]);
   const [hostMetrics, setHostMetrics] = useState<Record<string, Record<string, number>>>({});
   const [agents, setAgents] = useState<any[]>([]);
@@ -153,14 +155,19 @@ export default function InfrastructurePage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const [h, latest, agentList, netLatest] = await Promise.all([
+      const h = selectedHost || undefined;
+      const [hosts, latest, agentList, netLatest] = await Promise.all([
         observoApi.getHosts(),
-        observoApi.getLatest(),
+        observoApi.getLatest(h),
         observoApi.getAgents().catch(() => []),
-        observoApi.getNetworkLatest().catch(() => []),
+        observoApi.getNetworkLatest(h).catch(() => []),
       ]);
 
-      setHosts(h || []);
+      // Filter hosts by selected datasource if one is chosen
+      const filteredHosts = selectedHost
+        ? (hosts || []).filter((host: string) => host === selectedHost || host.startsWith(selectedHost))
+        : (hosts || []);
+      setHosts(filteredHosts);
       setAgents(agentList || []);
 
       // Group metrics by host
@@ -179,7 +186,7 @@ export default function InfrastructurePage() {
       });
       setNetworks(netByHost);
     } catch (e) { console.error(e); }
-  }, []);
+  }, [selectedHost]);
 
   const fetchProcesses = useCallback(async (host: string) => {
     try {

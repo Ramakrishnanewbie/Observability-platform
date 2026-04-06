@@ -491,7 +491,8 @@ export default function SettingsPage() {
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto p-6 max-w-3xl space-y-4">
+      <div className="flex-1 overflow-auto p-6">
+        <div className="max-w-5xl mx-auto space-y-4">
 
         {/* Platform status */}
         {health && (
@@ -500,16 +501,18 @@ export default function SettingsPage() {
               <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Platform Status</h3>
               <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full",
                 health.status === "ok" ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400")}>
-                {health.status === "ok" ? "Operational" : "Degraded"}
+                {health.status === "ok" ? "● Operational" : "● Degraded"}
               </span>
             </div>
             {health.stats && (
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-6 gap-3">
                 {[
                   { label: "Hosts", value: health.stats.total_hosts },
                   { label: "Metrics/hr", value: health.stats.total_metrics_1h?.toLocaleString() },
                   { label: "Logs/hr", value: health.stats.total_logs_1h?.toLocaleString() },
                   { label: "Spans/hr", value: health.stats.total_spans_1h?.toLocaleString() },
+                  { label: "Firing Alerts", value: health.stats.firing_alerts },
+                  { label: "Events/min", value: health.stats.events_per_minute?.toFixed(0) },
                 ].map(item => (
                   <div key={item.label} className="bg-muted/20 rounded-lg p-3 text-center">
                     <div className="text-[10px] text-muted-foreground uppercase tracking-wider">{item.label}</div>
@@ -533,35 +536,38 @@ export default function SettingsPage() {
         {/* API Keys */}
         <APIKeys />
 
-        {/* Team & RBAC — placeholder */}
-        <div className="bg-card border border-border rounded-xl p-5 flex items-center gap-4">
-          <div className="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center shrink-0">
-            <Users className="h-5 w-5 text-primary/60" />
+        {/* Bottom row — 2 columns */}
+        <div className="grid grid-cols-2 gap-4">
+          {/* Team & RBAC */}
+          <div className="bg-card border border-border rounded-xl p-5 flex items-center gap-4">
+            <div className="w-10 h-10 rounded-lg bg-primary/5 flex items-center justify-center shrink-0">
+              <Users className="h-5 w-5 text-primary/60" />
+            </div>
+            <div className="flex-1">
+              <p className="text-sm font-semibold">Team & RBAC</p>
+              <p className="text-[11px] text-muted-foreground mt-0.5">Invite members, manage roles (Owner, Admin, Member, Viewer)</p>
+            </div>
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Coming soon</span>
           </div>
-          <div className="flex-1">
-            <p className="text-sm font-semibold">Team & RBAC</p>
-            <p className="text-[11px] text-muted-foreground mt-0.5">Invite members, manage roles (Owner, Admin, Member, Viewer)</p>
-          </div>
-          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-muted text-muted-foreground">Coming soon</span>
-        </div>
 
-        {/* Data Retention */}
-        <div className="bg-card border border-border rounded-xl p-5">
-          <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">Data Retention</h3>
-          <div className="space-y-2">
-            {[
-              { label: "Metrics", retention: "30 days" },
-              { label: "Logs", retention: "30 days" },
-              { label: "Traces / Spans", retention: "30 days" },
-              { label: "Process Metrics", retention: "1 day" },
-              { label: "Network Metrics", retention: "7 days" },
-              { label: "Alert History", retention: "90 days" },
-            ].map((item, i) => (
-              <div key={i} className="flex items-center justify-between py-1.5 border-b border-border/20 last:border-0">
-                <span className="text-[12px] text-muted-foreground">{item.label}</span>
-                <span className="text-[11px] font-mono font-semibold">{item.retention}</span>
-              </div>
-            ))}
+          {/* Data Retention */}
+          <div className="bg-card border border-border rounded-xl p-5">
+            <h3 className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">Data Retention</h3>
+            <div className="space-y-2">
+              {[
+                { label: "Metrics", retention: "30 days" },
+                { label: "Logs", retention: "30 days" },
+                { label: "Traces / Spans", retention: "30 days" },
+                { label: "Process Metrics", retention: "1 day" },
+                { label: "Network Metrics", retention: "7 days" },
+                { label: "Alert History", retention: "90 days" },
+              ].map((item, i) => (
+                <div key={i} className="flex items-center justify-between py-1.5 border-b border-border/20 last:border-0">
+                  <span className="text-[12px] text-muted-foreground">{item.label}</span>
+                  <span className="text-[11px] font-mono font-semibold">{item.retention}</span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -571,21 +577,24 @@ export default function SettingsPage() {
           <p className="text-[12px] text-muted-foreground mb-3">
             Any app with an OpenTelemetry SDK can send traces, metrics, and logs directly to Observo.
           </p>
-          {[
-            { endpoint: "POST /v1/otlp/v1/traces", desc: "OTLP traces (JSON)" },
-            { endpoint: "POST /v1/otlp/v1/metrics", desc: "OTLP metrics (JSON)" },
-            { endpoint: "POST /v1/otlp/v1/logs", desc: "OTLP logs (JSON)" },
-          ].map((item, i) => (
-            <div key={i} className="flex items-center justify-between py-1.5 border-b border-border/20 last:border-0">
-              <code className="text-[11px] font-mono text-primary">{item.endpoint}</code>
-              <span className="text-[10px] text-muted-foreground">{item.desc}</span>
-            </div>
-          ))}
-          <p className="text-[11px] text-muted-foreground mt-3">
-            Set <code className="font-mono text-primary">OTEL_EXPORTER_OTLP_ENDPOINT={process.env.NEXT_PUBLIC_OBSERVO_API_URL || "http://localhost:8080"}/v1/otlp</code> in your app.
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {[
+              { endpoint: "POST /v1/otlp/v1/traces", desc: "Traces (JSON)" },
+              { endpoint: "POST /v1/otlp/v1/metrics", desc: "Metrics (JSON)" },
+              { endpoint: "POST /v1/otlp/v1/logs", desc: "Logs (JSON)" },
+            ].map((item, i) => (
+              <div key={i} className="bg-muted/20 rounded-lg px-3 py-2">
+                <code className="text-[10px] font-mono text-primary block truncate">{item.endpoint}</code>
+                <span className="text-[10px] text-muted-foreground">{item.desc}</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Set <code className="font-mono text-primary">OTEL_EXPORTER_OTLP_ENDPOINT={process.env.NEXT_PUBLIC_OBSERVO_API_URL || "http://localhost:8080"}/v1/otlp</code>
           </p>
         </div>
 
+        </div>{/* end max-w-5xl */}
       </div>
     </div>
   );

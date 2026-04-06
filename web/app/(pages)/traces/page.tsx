@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { observoApi } from "@/lib/observo-api";
+import { useDatasource } from "@/hooks/use-datasource";
 import { cn, formatDuration } from "@/lib/utils";
 import { Network, ArrowLeft } from "lucide-react";
 
@@ -10,6 +11,7 @@ function hashStr(s: string) { let h = 0; for (let i = 0; i < s.length; i++) { h 
 function svcColor(svc: string) { return SVC_COLORS[hashStr(svc) % SVC_COLORS.length]; }
 
 export default function TracesPage() {
+  const { selectedHost } = useDatasource();
   const [traces, setTraces] = useState<any[]>([]);
   const [services, setServices] = useState<string[]>([]);
   const [selService, setSelService] = useState("");
@@ -20,10 +22,11 @@ export default function TracesPage() {
     try {
       let params = "minutes=30&limit=50";
       if (selService) params += `&service=${selService}`;
+      if (selectedHost) params += `&host=${encodeURIComponent(selectedHost)}`;
       const [t, s] = await Promise.all([observoApi.getTraces(params), observoApi.getServices()]);
       setTraces(t || []); setServices(s || []);
     } catch (e) { console.error(e); }
-  }, [selService]);
+  }, [selService, selectedHost]);
 
   useEffect(() => { fetchTraces(); const i = setInterval(fetchTraces, 5000); return () => clearInterval(i); }, [fetchTraces]);
 
