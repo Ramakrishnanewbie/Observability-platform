@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { observoApi } from "@/lib/observo-api";
+import { useDatasource } from "@/hooks/use-datasource";
 import { cn } from "@/lib/utils";
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -87,6 +88,7 @@ function KPI({ label, value, sub, color }: { label: string; value: string; sub?:
 }
 
 export default function APMPage() {
+  const { selectedHost } = useDatasource();
   const [services, setServices] = useState<any[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [timeseries, setTimeseries] = useState<any[]>([]);
@@ -98,16 +100,18 @@ export default function APMPage() {
   const fetchServices = useCallback(async () => {
     try {
       const data = await observoApi.getAPMServices(timeRange);
-      setServices(data || []);
-      if (!selected && data && data.length > 0) {
-        setSelected(data[0].service);
-      }
+      // Filter by host if a datasource is selected
+      const filtered = selectedHost
+        ? (data || []).filter((s: any) => !s.host || s.host === selectedHost || s.host?.startsWith(selectedHost))
+        : (data || []);
+      setServices(filtered);
+      if (!selected && filtered.length > 0) setSelected(filtered[0].service);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [timeRange]);
+  }, [timeRange, selectedHost]);
 
   const fetchTimeseries = useCallback(async () => {
     if (!selected) return;

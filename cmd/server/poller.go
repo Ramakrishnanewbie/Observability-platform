@@ -423,7 +423,7 @@ func getGCPToken(ctx context.Context, serviceAccountJSON string) (string, error)
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
 	claimsJSON, _ := json.Marshal(map[string]interface{}{
 		"iss":   sa.ClientEmail,
-		"scope": "https://www.googleapis.com/auth/monitoring.read",
+		"scope": "https://www.googleapis.com/auth/monitoring.read https://www.googleapis.com/auth/logging.read https://www.googleapis.com/auth/cloud-platform.read-only",
 		"aud":   sa.TokenURI,
 		"iat":   now,
 		"exp":   now + 3600,
@@ -478,18 +478,49 @@ func pollGCP(ctx context.Context, ds *DataSource) ([]Metric, error) {
 		return nil, fmt.Errorf("GCP auth: %w", err)
 	}
 
-	// List of GCP metric types to query
+	// List of GCP metric types to query — broad coverage across all GCP services
 	gcpMetrics := []struct{ filter, name, unit string }{
+		// Compute Engine
 		{`metric.type="compute.googleapis.com/instance/cpu/utilization"`, "gcp.compute.cpu_utilization", "percent"},
 		{`metric.type="compute.googleapis.com/instance/memory/balloon/ram_used"`, "gcp.compute.memory_used", "bytes"},
 		{`metric.type="compute.googleapis.com/instance/disk/read_bytes_count"`, "gcp.compute.disk_read_bytes", "bytes"},
 		{`metric.type="compute.googleapis.com/instance/disk/write_bytes_count"`, "gcp.compute.disk_write_bytes", "bytes"},
 		{`metric.type="compute.googleapis.com/instance/network/received_bytes_count"`, "gcp.compute.network_recv_bytes", "bytes"},
+		{`metric.type="compute.googleapis.com/instance/network/sent_bytes_count"`, "gcp.compute.network_sent_bytes", "bytes"},
+		// CloudSQL
 		{`metric.type="cloudsql.googleapis.com/database/cpu/utilization"`, "gcp.cloudsql.cpu_utilization", "percent"},
+		{`metric.type="cloudsql.googleapis.com/database/memory/utilization"`, "gcp.cloudsql.memory_utilization", "percent"},
+		{`metric.type="cloudsql.googleapis.com/database/disk/bytes_used"`, "gcp.cloudsql.disk_bytes_used", "bytes"},
+		// GKE
+		{`metric.type="kubernetes.io/container/cpu/core_usage_time"`, "gcp.gke.cpu_core_usage", "seconds"},
+		{`metric.type="kubernetes.io/container/memory/used_bytes"`, "gcp.gke.memory_used_bytes", "bytes"},
+		{`metric.type="kubernetes.io/node/cpu/allocatable_utilization"`, "gcp.gke.node_cpu_utilization", "percent"},
+		// Cloud Run
+		{`metric.type="run.googleapis.com/request_count"`, "gcp.cloudrun.request_count", "count"},
+		{`metric.type="run.googleapis.com/request_latencies"`, "gcp.cloudrun.request_latency", "ms"},
+		{`metric.type="run.googleapis.com/container/cpu/utilizations"`, "gcp.cloudrun.cpu_utilization", "percent"},
+		{`metric.type="run.googleapis.com/container/memory/utilizations"`, "gcp.cloudrun.memory_utilization", "percent"},
+		// Cloud Storage
+		{`metric.type="storage.googleapis.com/storage/total_bytes"`, "gcp.storage.total_bytes", "bytes"},
+		{`metric.type="storage.googleapis.com/api/request_count"`, "gcp.storage.request_count", "count"},
+		// Pub/Sub
+		{`metric.type="pubsub.googleapis.com/subscription/num_undelivered_messages"`, "gcp.pubsub.undelivered_messages", "count"},
+		{`metric.type="pubsub.googleapis.com/topic/send_message_operation_count"`, "gcp.pubsub.messages_sent", "count"},
+		// BigQuery
+		{`metric.type="bigquery.googleapis.com/storage/table_count"`, "gcp.bigquery.table_count", "count"},
+		{`metric.type="bigquery.googleapis.com/storage/stored_bytes"`, "gcp.bigquery.stored_bytes", "bytes"},
+		// Cloud Functions
+		{`metric.type="cloudfunctions.googleapis.com/function/execution_count"`, "gcp.functions.execution_count", "count"},
+		{`metric.type="cloudfunctions.googleapis.com/function/execution_times"`, "gcp.functions.execution_time", "ms"},
+		// Dataflow
+		{`metric.type="dataflow.googleapis.com/job/element_count"`, "gcp.dataflow.element_count", "count"},
+		// Logging / API
+		{`metric.type="logging.googleapis.com/log_entry_count"`, "gcp.logging.log_entry_count", "count"},
+		{`metric.type="serviceruntime.googleapis.com/api/request_count"`, "gcp.api.request_count", "count"},
 	}
 
 	now := time.Now()
-	startTime := now.Add(-pollInterval * 2).Format(time.RFC3339)
+	startTime := now.Add(-30 * time.Minute).Format(time.RFC3339)
 	endTime := now.Format(time.RFC3339)
 
 	var metrics []Metric
@@ -558,7 +589,157 @@ func pollGCP(ctx context.Context, ds *DataSource) ([]Metric, error) {
 			}
 		}
 	}
+
+	// Also poll GCP Cloud Logging
+	go pollGCPLogs(context.Background(), ds, project, token)
+
 	return metrics, nil
+}
+
+// ── GCP Cloud Logging ────────────────────────────────────────────────────────
+
+func pollGCPLogs(ctx context.Context, ds *DataSource, project, token string) {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("[poller] GCP Logging panic: %v\n", r)
+		}
+	}()
+	apiURL := "https://logging.googleapis.com/v2/entries:list"
+
+	since := time.Now().Add(-pollInterval * 2).UTC().Format(time.RFC3339)
+	payload := map[string]interface{}{
+		"resourceNames": []string{"projects/" + project},
+		"filter":        fmt.Sprintf(`timestamp >= "%s"`, since),
+		"orderBy":       "timestamp desc",
+		"pageSize":      500,
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, strings.NewReader(string(payloadJSON)))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("[poller] GCP Logging request error: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != 200 {
+		fmt.Printf("[poller] GCP Logging returned %d: %s\n", resp.StatusCode, string(body))
+		return
+	}
+
+	var result struct {
+		Entries []struct {
+			Timestamp    string `json:"timestamp"`
+			Severity     string `json:"severity"`
+			LogName      string `json:"logName"`
+			TextPayload  string `json:"textPayload"`
+			JsonPayload  map[string]interface{} `json:"jsonPayload"`
+			ProtoPayload map[string]interface{} `json:"protoPayload"`
+			Resource     struct {
+				Type   string            `json:"type"`
+				Labels map[string]string `json:"labels"`
+			} `json:"resource"`
+			Labels map[string]string `json:"labels"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Printf("[poller] GCP Logging parse error: %v\n", err)
+		return
+	}
+
+	if len(result.Entries) == 0 {
+		return
+	}
+
+	var logs []LogEntry
+	for _, e := range result.Entries {
+		t, _ := time.Parse(time.RFC3339Nano, e.Timestamp)
+		if t.IsZero() {
+			t, _ = time.Parse(time.RFC3339, e.Timestamp)
+		}
+		if t.IsZero() {
+			t = time.Now()
+		}
+
+		// Normalize severity
+		sev := strings.ToLower(e.Severity)
+		switch sev {
+		case "debug", "info", "notice":
+			sev = "info"
+		case "warning":
+			sev = "warn"
+		case "error", "critical", "alert", "emergency":
+			if sev == "critical" || sev == "alert" || sev == "emergency" {
+				sev = "error"
+			}
+		default:
+			sev = "info"
+		}
+
+		// Extract message
+		message := e.TextPayload
+		if message == "" && e.JsonPayload != nil {
+			if msg, ok := e.JsonPayload["message"]; ok {
+				message = fmt.Sprintf("%v", msg)
+			} else {
+				data, _ := json.Marshal(e.JsonPayload)
+				message = string(data)
+			}
+		}
+		if message == "" && e.ProtoPayload != nil {
+			if msg, ok := e.ProtoPayload["methodName"]; ok {
+				message = fmt.Sprintf("%v", msg)
+			} else {
+				data, _ := json.Marshal(e.ProtoPayload)
+				message = string(data)
+			}
+		}
+		if message == "" {
+			message = e.LogName
+		}
+
+		// Extract host/source from log name and resource
+		host := "gcp-" + project
+		if e.Resource.Labels["instance_id"] != "" {
+			host = e.Resource.Labels["instance_id"]
+		} else if e.Resource.Labels["pod_name"] != "" {
+			host = e.Resource.Labels["pod_name"]
+		} else if e.Resource.Labels["service_name"] != "" {
+			host = e.Resource.Labels["service_name"]
+		}
+
+		// Extract source from log name: projects/xxx/logs/SOURCE
+		source := e.Resource.Type
+		parts := strings.Split(e.LogName, "/logs/")
+		if len(parts) == 2 {
+			source = parts[1]
+		}
+
+		logs = append(logs, LogEntry{
+			Timestamp: t,
+			Host:      host,
+			Source:    source,
+			Severity:  sev,
+			Message:   message,
+			Tags:      map[string]string{"source": "gcp", "project": project, "resource_type": e.Resource.Type, "ds_id": ds.ID},
+		})
+	}
+
+	if len(logs) > 0 {
+		if err := insertLogs(logs); err != nil {
+			fmt.Printf("[poller] GCP Logging insert error: %v\n", err)
+		} else {
+			fmt.Printf("[poller] GCP Logging: ingested %d log entries\n", len(logs))
+		}
+	}
 }
 
 // ── Azure Monitor ─────────────────────────────────────────────────────────────

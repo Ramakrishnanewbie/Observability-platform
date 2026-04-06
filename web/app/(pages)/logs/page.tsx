@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { observoApi } from "@/lib/observo-api";
+import { useDatasource } from "@/hooks/use-datasource";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,6 +28,7 @@ function LevelBadge({ level }: { level: string }) {
 }
 
 export default function LogsPage() {
+  const { selectedHost } = useDatasource();
   const [logs, setLogs] = useState<any[]>([]);
   const [stats, setStats] = useState<any[]>([]);
   const [search, setSearch] = useState("");
@@ -41,10 +43,11 @@ export default function LogsPage() {
       let params = "limit=200";
       if (search) params += `&search=${encodeURIComponent(search)}`;
       if (severity) params += `&severity=${severity}`;
+      if (selectedHost) params += `&host=${encodeURIComponent(selectedHost)}`;
       const [l, s] = await Promise.all([observoApi.getLogs(params), observoApi.getLogStats()]);
       setLogs(l || []); setStats(s || []);
     } catch (e) { console.error(e); }
-  }, [search, severity]);
+  }, [search, severity, selectedHost]);
 
   useEffect(() => { fetchLogs(); if (!isLive) return; const i = setInterval(fetchLogs, 5000); return () => clearInterval(i); }, [fetchLogs, isLive]);
   useEffect(() => { const t = setTimeout(() => setSearch(searchInput), 400); return () => clearTimeout(t); }, [searchInput]);

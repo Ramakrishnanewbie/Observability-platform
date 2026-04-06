@@ -7,8 +7,11 @@ import { cn } from "@/lib/utils";
 import {
   BarChart3, ScrollText, Network, Bell, Server,
   Settings, ChevronRight, LayoutDashboard, Zap,
-  GitBranch, Activity, AlertTriangle,
+  GitBranch, Activity, ChevronsUpDown,
+  Check, Plus, Layers,
 } from "lucide-react";
+import { observoApi } from "@/lib/observo-api";
+import { useDatasource, DataSource as DS } from "@/hooks/use-datasource";
 
 const NAV_GROUPS = [
   {
@@ -42,6 +45,105 @@ const NAV_GROUPS = [
     ],
   },
 ];
+
+// ── Datasource selector types ────────────────────────────────────────────────
+type DS = { id: string; name: string; type: string; status: string };
+
+const DS_ICON: Record<string, string> = { gcp: "GCP", aws: "AWS", azure: "AZ", kubernetes: "K8s", prometheus: "Prom" };
+const DS_COLOR: Record<string, string> = {
+  gcp: "text-blue-400 bg-blue-500/10",
+  aws: "text-orange-400 bg-orange-500/10",
+  azure: "text-sky-400 bg-sky-500/10",
+  kubernetes: "text-purple-400 bg-purple-500/10",
+  prometheus: "text-red-400 bg-red-500/10",
+};
+
+function DatasourceSelector({ expanded }: { expanded: boolean }) {
+  const [open, setOpen] = useState(false);
+  const { datasources: sources, selectedDS: selected, setSelectedDS } = useDatasource();
+  const current = selected;
+  const colorClass = current ? (DS_COLOR[current.type] || "text-muted-foreground bg-muted") : "text-muted-foreground bg-muted";
+
+  if (!expanded) {
+    return (
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-9 h-9 mx-auto flex items-center justify-center rounded-md hover:bg-sidebar-accent/50 transition-colors relative"
+        title={current?.name || "Select datasource"}
+      >
+        <div className={cn("w-5 h-5 rounded text-[9px] font-bold flex items-center justify-center", colorClass)}>
+          {current ? DS_ICON[current.type] || "?" : <Layers className="h-3 w-3" />}
+        </div>
+        {current?.status === "connected" && (
+          <span className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-emerald-400" />
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative px-2 mb-2">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2.5 rounded-md px-2.5 py-2 hover:bg-sidebar-accent/50 transition-colors"
+      >
+        <div className={cn("w-7 h-7 rounded-md text-[10px] font-bold flex items-center justify-center shrink-0", colorClass)}>
+          {current ? DS_ICON[current.type] || "?" : <Layers className="h-3.5 w-3.5" />}
+        </div>
+        <div className="flex-1 min-w-0 text-left">
+          <p className="text-xs font-semibold text-sidebar-foreground truncate">{current?.name || "No source"}</p>
+          <p className="text-[10px] text-sidebar-foreground/40 truncate">
+            {current ? (current.status === "connected" ? "● Connected" : "○ Disconnected") : "Add a datasource"}
+          </p>
+        </div>
+        <ChevronsUpDown className="h-3.5 w-3.5 text-sidebar-foreground/30 shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute left-2 right-2 top-full mt-1 z-50 rounded-lg border border-sidebar-border bg-sidebar shadow-xl overflow-hidden">
+          <div className="px-2 pt-2 pb-1">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-sidebar-foreground/30 px-1 mb-1">Datasources</p>
+          </div>
+          <div className="max-h-48 overflow-y-auto pb-1">
+            {sources.length === 0 ? (
+              <p className="text-xs text-sidebar-foreground/40 text-center py-4">No connected sources</p>
+            ) : (
+              sources.map((ds) => (
+                <button
+                  key={ds.id}
+                  onClick={() => { setSelectedDS(ds); setOpen(false); }}
+                  className={cn(
+                    "w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-sidebar-accent/50",
+                    selected?.id === ds.id && "bg-sidebar-accent"
+                  )}
+                >
+                  <div className={cn("w-6 h-6 rounded text-[9px] font-bold flex items-center justify-center shrink-0", DS_COLOR[ds.type] || "text-muted-foreground bg-muted")}>
+                    {DS_ICON[ds.type] || "?"}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-sidebar-foreground truncate">{ds.name}</p>
+                    <p className="text-[10px] text-sidebar-foreground/40 truncate capitalize">{ds.type}</p>
+                  </div>
+                  {selected?.id === ds.id && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+                </button>
+              ))
+            )}
+          </div>
+          <div className="border-t border-sidebar-border p-1">
+            <Link
+              href="/settings"
+              onClick={() => setOpen(false)}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-md text-xs text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent/50 transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Manage datasources
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function Sidebar({ firingCount = 0, anomalyCount = 0 }: { firingCount?: number; anomalyCount?: number }) {
   const pathname = usePathname();
@@ -106,6 +208,14 @@ export function Sidebar({ firingCount = 0, anomalyCount = 0 }: { firingCount?: n
             Observo
           </span>
         </div>
+      </div>
+
+      {/* Datasource Selector */}
+      <div className={cn(
+        "border-b border-sidebar-border shrink-0",
+        expanded ? "py-2" : "py-2 flex justify-center"
+      )}>
+        <DatasourceSelector expanded={expanded} />
       </div>
 
       {/* Navigation */}

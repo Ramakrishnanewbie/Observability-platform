@@ -1,9 +1,10 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.24-alpine AS builder
 RUN apk add --no-cache git
 WORKDIR /app
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN GONOSUMDB=* GOTOOLCHAIN=local go mod download
 COPY cmd/agent/ ./cmd/agent/
-RUN GONOSUMDB=* GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /observo-agent ./cmd/agent/
+RUN GONOSUMDB=* GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /observo-agent ./cmd/agent/
 
 FROM alpine:3.19
 RUN apk --no-cache add ca-certificates tzdata

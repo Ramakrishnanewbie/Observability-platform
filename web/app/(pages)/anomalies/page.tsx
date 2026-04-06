@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { observoApi } from "@/lib/observo-api";
+import { useDatasource } from "@/hooks/use-datasource";
 import { cn } from "@/lib/utils";
 import { Activity, RefreshCw, AlertTriangle, TrendingUp, TrendingDown } from "lucide-react";
 
@@ -34,6 +35,7 @@ function SeverityBadge({ severity }: { severity: string }) {
 }
 
 export default function AnomaliesPage() {
+  const { selectedHost } = useDatasource();
   const [anomalies, setAnomalies] = useState<any[]>([]);
   const [timeRange, setTimeRange] = useState(60);
   const [loading, setLoading] = useState(true);
@@ -41,13 +43,17 @@ export default function AnomaliesPage() {
   const fetchAnomalies = useCallback(async () => {
     try {
       const data = await observoApi.getAnomalies(timeRange);
-      setAnomalies(data || []);
+      // Filter by host if a datasource is selected
+      const filtered = selectedHost
+        ? (data || []).filter((a: any) => a.host === selectedHost || a.host?.startsWith(selectedHost))
+        : (data || []);
+      setAnomalies(filtered);
     } catch (e) {
       console.error(e);
     } finally {
       setLoading(false);
     }
-  }, [timeRange]);
+  }, [timeRange, selectedHost]);
 
   useEffect(() => {
     setLoading(true);

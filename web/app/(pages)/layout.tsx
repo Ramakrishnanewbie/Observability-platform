@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/sidebar";
+import { DatasourceProvider } from "@/hooks/use-datasource";
 import { observoApi } from "@/lib/observo-api";
 import { getSupabaseBrowserClient } from "@/lib/supabase-browser";
 import { LogOut, User, Settings, ChevronDown, Keyboard } from "lucide-react";
@@ -72,7 +73,7 @@ export default function PagesLayout({ children }: { children: React.ReactNode })
   const initials = displayName.split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
 
   return (
-    <>
+    <DatasourceProvider>
       <Sidebar firingCount={firingCount} anomalyCount={anomalyCount} />
       <main className="min-h-screen flex flex-col bg-background lg:ml-[52px]">
         {/* Top bar */}
@@ -144,7 +145,7 @@ export default function PagesLayout({ children }: { children: React.ReactNode })
           {children}
         </div>
 
-        {/* Footer */}
+        {/* Footer */}        
         <footer className="px-5 py-2.5 border-t border-border flex items-center justify-between text-[10px] text-muted-foreground/50 shrink-0">
           <span>Observo v3.0 — Metrics · Logs · Traces · APM · Alerts</span>
           <div className="flex items-center gap-4">
@@ -153,6 +154,6 @@ export default function PagesLayout({ children }: { children: React.ReactNode })
           </div>
         </footer>
       </main>
-    </>
+    </DatasourceProvider>
   );
 }
