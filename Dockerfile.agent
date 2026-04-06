@@ -1,0 +1,11 @@
+FROM golang:1.25-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /app
+COPY go.mod ./
+COPY cmd/agent/ ./cmd/agent/
+RUN GONOSUMDB=* GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /observo-agent ./cmd/agent/
+
+FROM alpine:3.19
+RUN apk --no-cache add ca-certificates tzdata
+COPY --from=builder /observo-agent /usr/local/bin/observo-agent
+ENTRYPOINT ["observo-agent"]

@@ -1,0 +1,12 @@
+FROM golang:1.25-alpine AS builder
+RUN apk add --no-cache git
+WORKDIR /app
+COPY go.mod ./
+COPY cmd/server/ ./cmd/server/
+RUN GONOSUMDB=* GOFLAGS=-mod=mod CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /observo-server ./cmd/server/
+
+FROM alpine:3.19
+RUN apk --no-cache add ca-certificates tzdata
+COPY --from=builder /observo-server /usr/local/bin/observo-server
+EXPOSE 8080
+ENTRYPOINT ["observo-server"]

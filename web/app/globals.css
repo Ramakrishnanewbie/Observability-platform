@@ -1,0 +1,138 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 20% 99%;
+    --foreground: 210 20% 6%;
+    --card: 210 20% 99%;
+    --card-foreground: 210 20% 6%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 210 20% 6%;
+    --primary: 195 75% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 15% 95%;
+    --secondary-foreground: 210 20% 10%;
+    --muted: 210 15% 95.5%;
+    --muted-foreground: 210 10% 42%;
+    --accent: 195 40% 94%;
+    --accent-foreground: 210 20% 10%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 210 15% 90%;
+    --input: 210 15% 90%;
+    --ring: 195 75% 50%;
+    --radius: 0.4rem;
+    --sidebar: 210 20% 97%;
+    --sidebar-foreground: 210 20% 10%;
+    --sidebar-border: 210 15% 90%;
+    --sidebar-accent: 210 15% 92%;
+    --sidebar-accent-foreground: 210 20% 10%;
+    --sidebar-primary: 195 75% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+  }
+
+  .dark {
+    --background: 215 25% 5%;
+    --foreground: 210 15% 95%;
+    --card: 215 20% 8%;
+    --card-foreground: 210 15% 95%;
+    --popover: 215 20% 8%;
+    --popover-foreground: 210 15% 95%;
+    --primary: 195 75% 50%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 215 15% 14%;
+    --secondary-foreground: 210 15% 90%;
+    --muted: 215 15% 12%;
+    --muted-foreground: 210 10% 60%;
+    --accent: 215 15% 14%;
+    --accent-foreground: 210 15% 90%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 215 15% 16%;
+    --input: 215 15% 16%;
+    --ring: 195 75% 50%;
+    --sidebar: 215 25% 5.5%;
+    --sidebar-foreground: 210 15% 90%;
+    --sidebar-border: 215 15% 11%;
+    --sidebar-accent: 215 18% 11%;
+    --sidebar-accent-foreground: 210 15% 90%;
+    --sidebar-primary: 195 75% 50%;
+    --sidebar-primary-foreground: 0 0% 100%;
+  }
+}
+
+@layer base {
+  html {
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  h1 { letter-spacing: -0.025em; }
+  h2 { letter-spacing: -0.02em; }
+  h3 { letter-spacing: -0.015em; }
+}
+
+/* ─── Card elevation: subtle shadow for depth ─── */
+@layer components {
+  .card-elevated {
+    @apply bg-card border border-border rounded-xl;
+    box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.15), 0 1px 2px -1px rgb(0 0 0 / 0.15);
+  }
+  .card-elevated:hover {
+    box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.2), 0 2px 4px -2px rgb(0 0 0 / 0.15);
+  }
+}
+
+/* ─── Animations ─── */
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes scale-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.animate-in { animation: fade-in 0.3s ease-out forwards; }
+.animate-slide-up { animation: slide-up 0.4s ease-out forwards; }
+.animate-scale-in { animation: scale-in 0.2s ease-out forwards; }
+
+.delay-1 { animation-delay: 50ms; }
+.delay-2 { animation-delay: 100ms; }
+.delay-3 { animation-delay: 150ms; }
+.delay-4 { animation-delay: 200ms; }
+
+/* ─── Focus ring ─── */
+.focus-ring {
+  @apply outline-none focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-1 focus-visible:ring-offset-background;
+}
+
+/* ─── Scrollbar ─── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: hsl(215 15% 20% / 0.4) transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+*:hover::-webkit-scrollbar-thumb { background: hsl(215 15% 20% / 0.35); }
+*::-webkit-scrollbar-thumb:hover { background: hsl(215 15% 20% / 0.55); }
