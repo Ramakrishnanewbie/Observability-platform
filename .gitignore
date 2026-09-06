@@ -1,1 +1,5 @@
 *.env.*
+
+# build artifacts and local files
+*.exe
+observo-server-linux
